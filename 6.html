@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>제주 관광지 지도</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+    <style>
+        body { margin: 0; font-family: sans-serif; }
+        #bar { display: flex; gap: 8px; padding: 10px; }
+        #q { flex: 1; padding: 8px; font-size: 16px; }
+        #reply { padding: 0 10px 10px; white-space: pre-wrap; }
+        #map { height: 70vh; }
+    </style>
+</head>
+<body>
+    <div id="bar">
+        <input id="q" placeholder="예: 서귀포에서 비 올 때 갈 실내 장소 알려줘">
+        <button id="go">찾기</button>
+    </div>
+    <div id="reply"></div>
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        // OpenStreetMap 타일 지도 (제주 중심)
+        const map = L.map("map").setView([33.38, 126.55], 10)
+        L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+            maxZoom: 19,
+            attribution: "&copy; OpenStreetMap contributors",
+        }).addTo(map)
+
+        const layer = L.layerGroup().addTo(map)
+        const reply = document.getElementById("reply")
+
+        // find_spots 결과를 마커로 표시
+        const showSpots = (spots) => {
+            layer.clearLayers()
+            const points = []
+            for (const s of spots) {
+                const box = document.createElement("div")
+                box.textContent = `${s.name} · ${s.area} · ${s.indoor ? "실내" : "야외"}\n${s.desc}`
+                box.style.whiteSpace = "pre-line"
+                L.marker([s.lat, s.lon]).addTo(layer).bindPopup(box)
+                points.push([s.lat, s.lon])
+            }
+            if (points.length) map.fitBounds(points, { padding: [40, 40], maxZoom: 13 })
+        }
+
+        const search = async () => {
+            const message = document.getElementById("q").value.trim()
+            if (!message) return
+            reply.textContent = "찾는 중..."
+            try {
+                const r = await fetch("/api/chat", {
+                    method: "POST",
+                    headers: { "content-type": "application/json" },
+                    body: JSON.stringify({ message }),
+                })
+                const data = await r.json()
+                if (!r.ok) throw new Error(data.error || "오류가 발생했습니다.")
+                reply.textContent = data.reply
+                showSpots(data.spots)
+            } catch (e) {
+                reply.textContent = e.message
+            }
+        }
+        document.getElementById("go").onclick = search
+        document.getElementById("q").onkeydown = (e) => { if (e.key === "Enter") search() }
+    </script>
+</body>
+</html>
