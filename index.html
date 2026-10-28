@@ -3,100 +3,127 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>제주 관광지 지도</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+    <title>실시간 지진 지도</title>
     <style>
-        body { margin: 0; font-family: sans-serif; }
-        #bar { display: flex; gap: 8px; padding: 10px; }
-        #q { flex: 1; padding: 8px; font-size: 16px; }
-        #msg { padding: 0 10px 10px; white-space: pre-wrap; }
-        #map { height: 70vh; }
+        html, body { margin: 0; height: 100%; background: #000; color: #eee; font-family: sans-serif; overflow: hidden; }
+        #globe { position: fixed; inset: 0; }
+        .panel { position: fixed; background: rgba(10, 14, 24, .78); border-radius: 10px; padding: 10px 14px; font-size: 14px; }
+        #info { top: 12px; left: 12px; }
+        #info h1 { margin: 0 0 4px; font-size: 18px; }
+        #legend { top: 12px; right: 12px; line-height: 1.7; }
+        .dot { display: inline-block; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+        #ctrl { bottom: 12px; left: 50%; transform: translateX(-50%); width: min(640px, calc(100% - 48px)); display: flex; align-items: center; gap: 10px; }
+        #ctrl input[type=range] { flex: 1; }
+        #ctrl button { padding: 6px 14px; font-size: 14px; cursor: pointer; white-space: nowrap; }
+        #clock { min-width: 80px; text-align: right; font-variant-numeric: tabular-nums; font-size: 13px; }
     </style>
 </head>
 <body>
-    <div id="bar">
-        <input id="q" placeholder="예: 서귀포 실내 / 동쪽 야외 / 제주시">
-        <button id="go">찾기</button>
+    <div id="globe"></div>
+    <div id="info" class="panel">
+        <h1>지금 지구의 지진</h1>
+        <div id="stat">불러오는 중...</div>
     </div>
-    <div id="msg">지역(동쪽 · 서쪽 · 서귀포 · 제주시)과 실내/야외를 입력하세요.</div>
-    <div id="map"></div>
+    <div id="legend" class="panel">
+        <div><span class="dot" style="width:8px;height:8px;background:#ffd23f"></span>규모 4 미만</div>
+        <div><span class="dot" style="width:12px;height:12px;background:#ff8c2b"></span>규모 4 ~ 5</div>
+        <div><span class="dot" style="width:16px;height:16px;background:#ff3030"></span>규모 5 이상</div>
+        <div style="font-size:12px;color:#aaa">출처: USGS</div>
+    </div>
+    <div id="ctrl" class="panel">
+        <button id="play">▶ 24시간 재생</button>
+        <input id="time" type="range" min="0" max="1000" value="1000">
+        <span id="clock">현재</span>
+    </div>
 
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/globe.gl@2.27.2/dist/globe.gl.min.js"></script>
     <script>
-        // jeju_spots.json 의 spots (파일 없이도 열리도록 내장)
-        const spots = [
-            {name:"성산일출봉", area:"동쪽", lat:33.4581, lon:126.9425, indoor:false, desc:"바다 위로 솟은 분화구 오름"},
-            {name:"섭지코지", area:"동쪽", lat:33.424, lon:126.9306, indoor:false, desc:"바닷가 산책길과 등대"},
-            {name:"아쿠아플라넷 제주", area:"동쪽", lat:33.433, lon:126.9277, indoor:true, desc:"대형 아쿠아리움"},
-            {name:"만장굴", area:"동쪽", lat:33.5284, lon:126.7714, indoor:true, desc:"용암동굴 — 비 영향이 적음"},
-            {name:"비자림", area:"동쪽", lat:33.4906, lon:126.8102, indoor:false, desc:"비자나무 숲길"},
-            {name:"협재해수욕장", area:"서쪽", lat:33.394, lon:126.2397, indoor:false, desc:"에메랄드빛 바다와 비양도"},
-            {name:"새별오름", area:"서쪽", lat:33.3657, lon:126.3567, indoor:false, desc:"억새로 유명한 오름"},
-            {name:"오설록 티 뮤지엄", area:"서쪽", lat:33.3059, lon:126.2894, indoor:true, desc:"녹차 박물관과 차밭"},
-            {name:"본태박물관", area:"서쪽", lat:33.303, lon:126.395, indoor:true, desc:"건축과 전통 공예 전시"},
-            {name:"국립제주박물관", area:"제주시", lat:33.5139, lon:126.5487, indoor:true, desc:"제주 역사 · 문화 전시"},
-            {name:"동문재래시장", area:"제주시", lat:33.5116, lon:126.5262, indoor:true, desc:"지붕 있는 전통시장 먹거리"},
-            {name:"제주특별자치도 민속자연사박물관", area:"제주시", lat:33.5063, lon:126.53, indoor:true, desc:"제주의 자연과 생활 전시"},
-            {name:"한라수목원", area:"제주시", lat:33.4697, lon:126.493, indoor:false, desc:"도심 가까운 숲 산책"},
-            {name:"용두암", area:"제주시", lat:33.5164, lon:126.4919, indoor:false, desc:"용머리 모양 바위 해안"},
-            {name:"천지연폭포", area:"서귀포", lat:33.2448, lon:126.5594, indoor:false, desc:"서귀포 폭포 산책로"},
-            {name:"이중섭미술관", area:"서귀포", lat:33.2466, lon:126.5652, indoor:true, desc:"서귀포 거리의 미술관"},
-            {name:"외돌개", area:"서귀포", lat:33.2398, lon:126.545, indoor:false, desc:"바다에 홀로 선 바위와 올레길"},
-            {name:"쇠소깍", area:"서귀포", lat:33.2522, lon:126.6237, indoor:false, desc:"민물과 바다가 만나는 계곡"},
-            {name:"중문 대포 주상절리대", area:"서귀포", lat:33.2378, lon:126.425, indoor:false, desc:"육각 기둥 모양 해안 절벽"},
-        ]
-        const AREAS = ["동쪽", "서쪽", "서귀포", "제주시"]
+        const FEED = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson"
+        const HOUR = 3600 * 1000
+        const color = (m) => (m >= 5 ? "#ff3030" : m >= 4 ? "#ff8c2b" : "#ffd23f")
+        const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]))
 
-        // find_spots(area, indoor): indoor 를 생략(undefined)하면 실내/야외 구분 없음. 최대 8곳.
-        const find_spots = (area, indoor) =>
-            spots
-                .filter((s) => s.area === area)
-                .filter((s) => typeof indoor !== "boolean" || s.indoor === indoor)
-                .slice(0, 8)
+        let quakes = []      // 최근 24시간 지진
+        let start = 0, end = 0
+        let cursor = 0       // 화면에 보이는 기준 시각
+        let playing = false
 
-        // 입력 문장에서 지역과 실내/야외를 뽑는다.
-        const parse = (text) => {
-            const area = AREAS.find((a) => text.includes(a))
-            let indoor
-            if (text.includes("실내")) indoor = true
-            else if (text.includes("야외") || text.includes("실외")) indoor = false
-            return { area, indoor }
+        const globe = Globe()(document.getElementById("globe"))
+            .globeImageUrl("https://cdn.jsdelivr.net/npm/three-globe@2.27.2/example/img/earth-night.jpg")
+            .bumpImageUrl("https://cdn.jsdelivr.net/npm/three-globe@2.27.2/example/img/earth-topology.png")
+            .backgroundImageUrl("https://cdn.jsdelivr.net/npm/three-globe@2.27.2/example/img/night-sky.png")
+            // 규모별로 커지는 점
+            .pointLat("lat").pointLng("lng")
+            .pointAltitude((q) => 0.01 + q.mag * 0.012)
+            .pointRadius((q) => 0.15 + q.mag * 0.12)
+            .pointColor((q) => color(q.mag))
+            .pointLabel((q) => `<b>M ${q.mag.toFixed(1)}</b> ${esc(q.place)}<br>${new Date(q.time).toLocaleString()}<br>깊이 ${q.depth.toFixed(0)} km`)
+            // 규모별로 번지는 원
+            .ringLat("lat").ringLng("lng")
+            .ringColor((q) => (t) => { const c = color(q.mag); return c + Math.round((1 - t) * 255).toString(16).padStart(2, "0") })
+            .ringMaxRadius((q) => 1 + q.mag * 1.6)
+            .ringPropagationSpeed((q) => 1 + q.mag * 0.5)
+            .ringRepeatPeriod((q) => 1800 - q.mag * 150)
+
+        globe.controls().autoRotate = true
+        globe.controls().autoRotateSpeed = 0.4
+        const resize = () => globe.width(innerWidth).height(innerHeight)
+        addEventListener("resize", resize); resize()
+
+        // cursor 시각까지 일어난 지진만 보여준다. 재생 중이면 방금 일어난 것(최근 1시간)에 원을 번지게 한다.
+        const render = () => {
+            const visible = quakes.filter((q) => q.time <= cursor)
+            const rings = cursor >= end ? visible.filter((q) => q.mag >= 4) : visible.filter((q) => cursor - q.time < HOUR)
+            globe.pointsData(visible).ringsData(rings)
+            document.getElementById("stat").textContent =
+                `${visible.length}건 · 최대 규모 ${Math.max(0, ...visible.map((q) => q.mag)).toFixed(1)}`
+            document.getElementById("clock").textContent = cursor >= end ? "현재" : new Date(cursor).toLocaleTimeString()
+            document.getElementById("time").value = end > start ? Math.round(((cursor - start) / (end - start)) * 1000) : 1000
         }
 
-        // OpenStreetMap 타일 지도 (제주 중심)
-        const map = L.map("map").setView([33.38, 126.55], 10)
-        L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-            maxZoom: 19,
-            attribution: "&copy; OpenStreetMap contributors",
-        }).addTo(map)
-        const layer = L.layerGroup().addTo(map)
-        const msg = document.getElementById("msg")
-
-        const search = () => {
-            const { area, indoor } = parse(document.getElementById("q").value)
-            layer.clearLayers()
-            if (!area) {
-                msg.textContent = "지역(동쪽 · 서쪽 · 서귀포 · 제주시)을 입력하세요."
-                return
-            }
-            const found = find_spots(area, indoor)
-            if (found.length === 0) {
-                msg.textContent = "조건에 맞는 장소가 목록에 없습니다."
-                return
-            }
-            msg.textContent = `${area} ${indoor === undefined ? "" : indoor ? "실내 " : "야외 "}${found.length}곳`
-            const points = []
-            for (const s of found) {
-                const box = document.createElement("div")
-                box.textContent = `${s.name} · ${s.area} · ${s.indoor ? "실내" : "야외"}\n${s.desc}`
-                box.style.whiteSpace = "pre-line"
-                L.marker([s.lat, s.lon]).addTo(layer).bindPopup(box)
-                points.push([s.lat, s.lon])
-            }
-            map.fitBounds(points, { padding: [40, 40], maxZoom: 13 })
+        // 24시간을 약 30초에 재생
+        let last = 0
+        const tick = (now) => {
+            if (!playing) return
+            cursor = Math.min(end, cursor + (now - last) * ((end - start) / 30000))
+            last = now
+            render()
+            if (cursor >= end) stop(); else requestAnimationFrame(tick)
         }
-        document.getElementById("go").onclick = search
-        document.getElementById("q").onkeydown = (e) => { if (e.key === "Enter") search() }
+        const stop = () => { playing = false; document.getElementById("play").textContent = "▶ 24시간 재생" }
+        document.getElementById("play").onclick = () => {
+            if (playing) return stop()
+            if (cursor >= end) cursor = start
+            playing = true; last = performance.now()
+            document.getElementById("play").textContent = "⏸ 멈춤"
+            requestAnimationFrame(tick)
+        }
+        document.getElementById("time").oninput = (e) => {
+            stop()
+            cursor = start + ((end - start) * e.target.value) / 1000
+            render()
+        }
+
+        const load = async () => {
+            try {
+                const r = await fetch(FEED)
+                if (!r.ok) throw new Error(r.status)
+                const data = await r.json()
+                quakes = data.features
+                    .filter((f) => f.properties.mag != null)
+                    .map((f) => ({
+                        mag: f.properties.mag, place: f.properties.place || "", time: f.properties.time,
+                        lng: f.geometry.coordinates[0], lat: f.geometry.coordinates[1], depth: f.geometry.coordinates[2],
+                    }))
+                end = Date.now(); start = end - 24 * HOUR
+                if (!playing) cursor = end
+                render()
+            } catch (e) {
+                document.getElementById("stat").textContent = "지진 데이터를 불러오지 못했습니다."
+            }
+        }
+        load()
+        setInterval(load, 5 * 60 * 1000) // 5분마다 갱신
     </script>
 </body>
 </html>
