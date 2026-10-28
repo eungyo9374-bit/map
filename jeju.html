@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>제주 날씨 맞춤 추천</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+    <style>
+        body { margin: 0; font-family: sans-serif; }
+        #bar { display: flex; gap: 8px; padding: 10px; }
+        #q { flex: 1; padding: 8px; font-size: 16px; }
+        #steps { margin: 0 10px; padding: 8px 12px; background: #f3f5f8; border-radius: 8px; font-size: 13px; color: #445; display: none; }
+        #steps div { padding: 2px 0; }
+        #answer { padding: 10px; white-space: pre-wrap; line-height: 1.5; }
+        #map { height: 55vh; }
+    </style>
+</head>
+<body>
+    <div id="bar">
+        <input id="q" placeholder="예: 서귀포 갈 건데 뭐 할까? / 동쪽 야외 / 어디가 좋아?">
+        <button id="go">추천</button>
+    </div>
+    <div id="steps"></div>
+    <div id="answer">지역(동쪽 · 서쪽 · 서귀포 · 제주시)과 실내/야외를 말해 보세요. 지역을 생략하면 날씨가 가장 좋은 곳을 골라 드려요.</div>
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        // ---------- 데이터 (jeju_spots_v2.json 내장) ----------
+        const areas = { "동쪽": [33.46, 126.88], "서쪽": [33.36, 126.3], "서귀포": [33.25, 126.56], "제주시": [33.51, 126.52] }
+        const spots = [
+            {name:"성산일출봉", area:"동쪽", lat:33.4581, lon:126.9425, indoor:false, desc:"바다 위로 솟은 분화구 오름"},
+            {name:"섭지코지", area:"동쪽", lat:33.424, lon:126.9306, indoor:false, desc:"바닷가 산책길과 등대"},
+            {name:"아쿠아플라넷 제주", area:"동쪽", lat:33.433, lon:126.9277, indoor:true, desc:"대형 아쿠아리움"},
+            {name:"만장굴", area:"동쪽", lat:33.5284, lon:126.7714, indoor:true, desc:"용암동굴 — 비 영향이 적음"},
+            {name:"비자림", area:"동쪽", lat:33.4906, lon:126.8102, indoor:false, desc:"비자나무 숲길"},
+            {name:"협재해수욕장", area:"서쪽", lat:33.394, lon:126.2397, indoor:false, desc:"에메랄드빛 바다와 비양도"},
+            {name:"새별오름", area:"서쪽", lat:33.3657, lon:126.3567, indoor:false, desc:"억새로 유명한 오름"},
+            {name:"오설록 티 뮤지엄", area:"서쪽", lat:33.3059, lon:126.2894, indoor:true, desc:"녹차 박물관과 차밭"},
+            {name:"본태박물관", area:"서쪽", lat:33.303, lon:126.395, indoor:true, desc:"건축과 전통 공예 전시"},
+            {name:"국립제주박물관", area:"제주시", lat:33.5139, lon:126.5487, indoor:true, desc:"제주 역사 · 문화 전시"},
+            {name:"동문재래시장", area:"제주시", lat:33.5116, lon:126.5262, indoor:true, desc:"지붕 있는 전통시장 먹거리"},
+            {name:"제주특별자치도 민속자연사박물관", area:"제주시", lat:33.5063, lon:126.53, indoor:true, desc:"제주의 자연과 생활 전시"},
+            {name:"한라수목원", area:"제주시", lat:33.4697, lon:126.493, indoor:false, desc:"도심 가까운 숲 산책"},
+            {name:"용두암", area:"제주시", lat:33.5164, lon:126.4919, indoor:false, desc:"용머리 모양 바위 해안"},
+            {name:"천지연폭포", area:"서귀포", lat:33.2448, lon:126.5594, indoor:false, desc:"서귀포 폭포 산책로"},
+            {name:"이중섭미술관", area:"서귀포", lat:33.2466, lon:126.5652, indoor:true, desc:"서귀포 거리의 미술관"},
+            {name:"외돌개", area:"서귀포", lat:33.2398, lon:126.545, indoor:false, desc:"바다에 홀로 선 바위와 올레길"},
+            {name:"쇠소깍", area:"서귀포", lat:33.2522, lon:126.6237, indoor:false, desc:"민물과 바다가 만나는 계곡"},
+            {name:"중문 대포 주상절리대", area:"서귀포", lat:33.2378, lon:126.425, indoor:false, desc:"육각 기둥 모양 해안 절벽"},
+        ]
+
+        // ---------- 도구 2개 ----------
+        // 도구 1: find_spots — 목록 안에서만 최대 8곳 (목록 밖 장소는 없다)
+        const find_spots = ({ area, indoor }) => ({
+            spots: spots
+                .filter((s) => s.area === area)
+                .filter((s) => typeof indoor !== "boolean" || s.indoor === indoor)
+                .slice(0, 8),
+        })
+
+        // 도구 2: get_weather — Open-Meteo (키 불필요)
+        const CODES = { 0: "맑음", 1: "대체로 맑음", 2: "구름 조금", 3: "흐림", 45: "안개", 48: "안개", 51: "이슬비", 53: "이슬비", 55: "이슬비",
+            61: "비", 63: "비", 65: "강한 비", 71: "눈", 73: "눈", 75: "눈", 80: "소나기", 81: "소나기", 82: "강한 소나기", 95: "뇌우", 96: "뇌우", 99: "뇌우" }
+        const get_weather = async ({ area }) => {
+            const [lat, lon] = areas[area]
+            const url = "https://api.open-meteo.com/v1/forecast?" + new URLSearchParams({
+                latitude: lat, longitude: lon, timezone: "Asia/Seoul", forecast_days: "1", wind_speed_unit: "ms",
+                current: "temperature_2m,precipitation,weather_code,wind_speed_10m",
+                daily: "precipitation_probability_max",
+            })
+            const r = await fetch(url)
+            if (!r.ok) throw new Error("Open-Meteo " + r.status)
+            const d = await r.json()
+            return {
+                temp: d.current.temperature_2m, rain: d.current.precipitation, wind: d.current.wind_speed_10m,
+                prob: d.daily.precipitation_probability_max[0],
+                text: CODES[d.current.weather_code] || "알 수 없음", code: d.current.weather_code,
+            }
+        }
+
+        // 나쁜 날씨(비 · 강풍 · 폭염 · 한파)면 실내를 권한다.
+        const badWeather = (w) => w.rain > 0 || w.prob >= 60 || w.code >= 51 || w.wind >= 10 || w.temp >= 33 || w.temp <= 0
+        const why = (w) => {
+            const r = []
+            if (w.rain > 0 || w.code >= 51) r.push("비")
+            else if (w.prob >= 60) r.push(`강수확률 ${w.prob}%`)
+            if (w.wind >= 10) r.push(`강풍 ${w.wind}m/s`)
+            if (w.temp >= 33) r.push("폭염")
+            if (w.temp <= 0) r.push("한파")
+            return r.join(" · ")
+        }
+
+        // ---------- 에이전트: 입력을 읽고 도구를 순서대로 호출해 추천 ----------
+        const AREAS = Object.keys(areas)
+        const stepsBox = document.getElementById("steps")
+        const log = (text) => { const d = document.createElement("div"); d.textContent = text; stepsBox.appendChild(d) }
+
+        const agent = async (text) => {
+            let area = AREAS.find((a) => text.includes(a))
+            let indoor = text.includes("실내") ? true : (text.includes("야외") || text.includes("실외")) ? false : undefined
+
+            // 지역이 없으면 4곳 날씨를 모두 조회해 가장 좋은 곳을 고른다.
+            if (!area) {
+                log("지역이 없어 4개 지역의 날씨를 모두 확인합니다.")
+                const ws = await Promise.all(AREAS.map(async (a) => { log(`get_weather(area="${a}")`); return [a, await get_weather({ area: a })] }))
+                ws.sort((x, y) => (badWeather(x[1]) - badWeather(y[1])) || (x[1].prob - y[1].prob))
+                area = ws[0][0]
+                log(`→ 날씨가 가장 좋은 지역: ${area}`)
+                var weather = ws[0][1]
+            } else {
+                log(`get_weather(area="${area}")`)
+                weather = await get_weather({ area })
+            }
+            log(`→ ${weather.text}, ${weather.temp}°C, 강수확률 ${weather.prob}%, 바람 ${weather.wind}m/s`)
+
+            // 실내/야외를 말하지 않았으면 날씨로 정한다.
+            let auto = false
+            if (indoor === undefined) { indoor = badWeather(weather); auto = true }
+
+            log(`find_spots(area="${area}", indoor=${indoor})`)
+            let found = find_spots({ area, indoor }).spots
+            if (found.length === 0) {
+                log("→ 조건에 맞는 곳이 없어 실내/야외 구분 없이 다시 찾습니다.")
+                found = find_spots({ area }).spots
+            }
+            log(`→ ${found.length}곳`)
+
+            const where = `${area} (${weather.text}, ${weather.temp}°C, 강수확률 ${weather.prob}%)`
+            let head
+            if (auto) head = indoor ? `${where} — ${why(weather)} 예상이라 실내 위주로 골랐어요.` : `${where} — 날씨가 괜찮아서 야외도 좋아요.`
+            else head = `${where} — 원하신 대로 ${indoor ? "실내" : "야외"}만 골랐어요.`
+            if (!auto && !indoor && badWeather(weather)) head += `\n⚠ 다만 ${why(weather)} 예상이니 우산이나 대안을 챙기세요.`
+            return { head, found }
+        }
+
+        // ---------- 지도 ----------
+        const map = L.map("map").setView([33.38, 126.55], 10)
+        L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "&copy; OpenStreetMap contributors" }).addTo(map)
+        const layer = L.layerGroup().addTo(map)
+        const answer = document.getElementById("answer")
+
+        const run = async () => {
+            const text = document.getElementById("q").value.trim()
+            stepsBox.textContent = ""
+            stepsBox.style.display = "block"
+            layer.clearLayers()
+            answer.textContent = "찾는 중..."
+            try {
+                const { head, found } = await agent(text)
+                answer.textContent = head + "\n\n" + found.map((s, i) => `${i + 1}. ${s.name} (${s.indoor ? "실내" : "야외"}) — ${s.desc}`).join("\n")
+                const points = []
+                for (const s of found) {
+                    const box = document.createElement("div")
+                    box.textContent = `${s.name} · ${s.area} · ${s.indoor ? "실내" : "야외"}\n${s.desc}`
+                    box.style.whiteSpace = "pre-line"
+                    L.marker([s.lat, s.lon]).addTo(layer).bindPopup(box)
+                    points.push([s.lat, s.lon])
+                }
+                if (points.length) map.fitBounds(points, { padding: [40, 40], maxZoom: 13 })
+            } catch (e) {
+                answer.textContent = "날씨 정보를 가져오지 못했습니다. 잠시 후 다시 시도하세요. (" + e.message + ")"
+            }
+        }
+        document.getElementById("go").onclick = run
+        document.getElementById("q").onkeydown = (e) => { if (e.key === "Enter") run() }
+    </script>
+</body>
+</html>
